@@ -319,6 +319,67 @@ local function inline_if_stmt(if_statement)
   end
 end
 
+local comprehension_configs = {
+  ["list_comprehension"]       = {"[]",    ".append("},
+  ["set_comprehension"]        = {"set()", ".add("},
+  ["dictionary_comprehension"] = {"{}"},
+}
+-- public
+-- @param node tsnode
+-- @return string, table, tsnode
+-- @return nil
+local function expand_for_in(for_in_clause)
+  local comprehension = for_in_clause:parent()
+  local comp_type = comprehension:type()
+  if comp_type == "generator_expression" then
+    return
+  end
+  local parent = comprehension:parent()
+  if parent:type() ~= "assignment" then
+    return
+  end
+
+  local accumulator_name = helpers.node_text(parent:named_child(0))
+  parent = parent:parent()
+  if parent:type() ~= "expression_statement" then
+    return
+  end
+
+  local _, start_col = parent:start()
+  local indent = string.rep(" ", start_col)
+
+  local comp_cfg = comprehension_configs[comp_type]
+  local replacement = {
+    accumulator_name .. " = " .. comp_cfg[1],
+    indent .. helpers.node_text(for_in_clause) .. ":",
+  }
+  indent = indent .. "    "
+
+  local if_clause = comprehension:named_child(2)
+  if if_clause then
+    table.insert(replacement, indent .. helpers.node_text(if_clause) .. ":")
+    indent = indent .. "    "
+  end
+
+  local comp_body = comprehension:named_child(0)
+  if comp_type == "dictionary_comprehension" then
+    local key   = helpers.node_text(comp_body:named_child(0))
+    local value = helpers.node_text(comp_body:named_child(1))
+    table.insert(
+      replacement,
+      indent .. accumulator_name .. "[".. key .. "] = " .. value
+    )
+  else
+    local arg = helpers.node_text(comp_body)
+    table.insert(
+      replacement,
+      indent .. accumulator_name .. comp_cfg[2] .. arg .. ")"
+    )
+  end
+
+  return replacement, {cursor = {}}, parent
+end
+
 -- Special cases:
 -- Because "is" and "not" are valid by themselves, they are seen as separate
 -- unnamed nodes by TS.  This means that without special handling, a config of:
@@ -388,4 +449,5 @@ return {
   ["integer"]                  = actions.toggle_int_readability(),
   ["conditional_expression"]   = { { expand_if, name = "Expand Conditional" } },
   ["if_statement"]             = { { inline_if_stmt, name = "Inline Conditional" } },
+  ["for_in_clause"]            = { { expand_for_in, name = "Expand Comprehension" } },
 }
