@@ -1,8 +1,9 @@
-local actions      = require("ts-node-action.actions")
-local helpers      = require("ts-node-action.helpers")
-local nu           = require("ts-node-action.filetypes.python.node_utils")
-local conditional  = require("ts-node-action.filetypes.python.conditional")
-local cycle_import = require("ts-node-action.filetypes.python.cycle_import")
+local actions       = require("ts-node-action.actions")
+local helpers       = require("ts-node-action.helpers")
+local nu            = require("ts-node-action.filetypes.python.node_utils")
+local conditional   = require("ts-node-action.filetypes.python.conditional")
+local comprehension = require("ts-node-action.filetypes.python.toggle_comprehension")
+local cycle_import  = require("ts-node-action.filetypes.python.cycle_import")
 
 -- Special cases:
 -- Because "is" and "not" are valid by themselves, they are seen as separate
@@ -61,7 +62,6 @@ local boolean_override = {
 }
 
 ---@param padding_override table
----@param uncollapsible_override table
 ---@return table
 local function inline_if_statement(padding_override, uncollapsible_override)
   padding_override = vim.tbl_deep_extend(
@@ -176,4 +176,6 @@ return {
   ["if_statement"]             = { inline_if_statement(padding, uncollapsible), },
   ["import_from_statement"]    = { cycle_import(cycle_import_from_config), },
   ["import_statement"]         = { cycle_import(cycle_import_config), },
+  ["for_in_clause"]            = { { comprehension.expand_comprehension, name = "Comprehension -> For" } },
+  ["for_statement"]            = { { comprehension.collapse_for_statement, name = "For -> Comprehension" } },
 }

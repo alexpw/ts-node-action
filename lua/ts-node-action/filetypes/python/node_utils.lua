@@ -9,18 +9,58 @@ local helpers = require("ts-node-action.helpers")
 
 local M = {}
 
-M.lines = function(node)
-  local lines = helpers.node_text(node)
-  if type(lines) == "string" then
-    return { lines }
+---@param node TSNode
+---@return string
+M.text = function(node)
+  if not node then return "" end
+
+  local buf = vim.api.nvim_get_current_buf()
+  if vim.treesitter.get_node_text then
+    return vim.trim(vim.treesitter.get_node_text(node, buf))
+  else
+    -- TODO: Remove in 0.10
+    return vim.trim(vim.treesitter.query.get_node_text(node, buf))
   end
-  return lines
 end
 
 ---@param node TSNode
-M.trim_whitespace = function(node)
-  local start_row, _, end_row, _ = node:range()
-  vim.cmd("silent! keeppatterns " .. (start_row + 1) .. "," .. (end_row + 1) .. "s/\\s\\+$//g")
+---@return table
+M.lines = function(node)
+  local text = M.text(node)
+  if not text then
+    return {}
+  end
+  if text:match("\n") then
+    return vim.tbl_map(vim.trim, vim.split(text, "\n"))
+  end
+  return { text }
+end
+
+-- Lines between two nodes. Inclusive of start node. Does not include end node.
+--
+---@param node_start TSNode
+---@param node_end TSNode
+---@return table
+M.lines_between = function(node_start, node_end)
+  local start_row, start_col = node_start:start()
+  local end_row, end_col     = node_end:start()
+  local lines   = vim.api.nvim_buf_get_lines(0, start_row, end_row + 1, false)
+  lines[1]      = lines[1]:sub(start_col + 1)
+  if start_row == end_row then
+    end_col = end_col - start_col + 1
+  end
+  lines[#lines] = lines[#lines]:sub(1, end_col)
+  return lines
+end
+
+---@param nodes TSNode[]
+---@return table
+M.concat = function(nodes)
+  local lines = {}
+  for _, node_lines in ipairs(nodes) do
+    vim.list_extend(lines, M.lines(node_lines))
+  end
+  return lines
 end
 
 -- Recreating actions.toggle_multiline.collapse_child_nodes() here because
@@ -34,11 +74,40 @@ M.collapse_func = function(padding, uncollapsible)
 
   return function(node)
     if not helpers.node_is_multiline(node) then
-      return helpers.node_text(node)
+      return M.text(node)
     end
     return collapse(node)
   end
 end
+
+---@param node TSNode
+---@return boolean
+M.has_comments = function(node)
+  for child in M.iter_named_children(node) do
+    if child:type() == "comment" then
+      return true
+    else
+      M.has_comments(child)
+    end
+  end
+  return false
+end
+
+---@param node_type string|table
+---@return function @A function that takes a TSNode and returns a boolean
+M.accept_type = function(node_type)
+  if type(node_type) == "string" then
+    return function(node)
+      return node:type() == node_type
+    end
+  else
+    return function(node)
+      return vim.tbl_contains(node_type, node:type())
+    end
+  end
+end
+
+M.accept_comment = M.accept_type("comment")
 
 -- Like vim.tbl_filter, but for TSNodes.
 --
@@ -48,11 +117,28 @@ end
 M.filter = function(accept, iter)
   local nodes = {}
   local node  = iter()
-  while node and accept(node) do
-    table.insert(nodes, node)
+  while node do
+    if accept(node) then
+      table.insert(nodes, node)
+    end
     node = iter()
   end
   return nodes
+end
+
+-- Returns the first node that matches the accept function.
+--
+---@param accept fun(node: TSNode): boolean @returns true for a valid node
+---@param iter fun(): TSNode|nil @returns the next node
+---@return TSNode|nil
+M.find = function(accept, iter)
+  local node = iter()
+  while node do
+    if accept(node) then
+      return node
+    end
+    node = iter()
+  end
 end
 
 -- Like filter, but stops at the first falsey value.
@@ -111,7 +197,6 @@ M.iter_parent = function(node)
   end
 end
 
-
 -- Create a fake node to represent the replacement target. This is necessary
 -- when the replacement spans multiple nodes without a suitable parent to serve
 -- as a the target (eg, a top-level node's parent is the root and we are acting
@@ -139,6 +224,12 @@ M.make_target = function(node, start_pos, end_pos)
   end
 
   return target
+end
+
+---@param node TSNode
+M.trim_whitespace = function(node)
+  local start_row, _, end_row, _ = node:range()
+  vim.cmd("silent! keeppatterns " .. (start_row + 1) .. "," .. (end_row + 1) .. "s/\\s\\+$//g")
 end
 
 return M
