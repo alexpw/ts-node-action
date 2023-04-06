@@ -333,7 +333,7 @@ local function get_assignment_collection_info(node_rhs)
     coll_type = collection_types[fn_name]
     if coll_type then
       local argument_list = nu.text(node_rhs:named_child(1)):gsub("%s+", "")
-      if argument_list ~= "()" then
+      if argument_list ~= "()" and argument_list ~= "([])" then
         return
       end
       return coll_type
@@ -357,6 +357,11 @@ local function destructure_for_comprehension(for_statement)
     assignment = assignment:named_child(1)
   end
   if #identifiers == 0 then
+    return
+  end
+
+  local collection = get_assignment_collection_info(assignment)
+  if not collection then
     return
   end
 
@@ -401,7 +406,7 @@ local function destructure_for_comprehension(for_statement)
     node          = for_statement,
     expr_stmt     = expr_stmt,
     identifiers   = identifiers,
-    collection    = get_assignment_collection_info(assignment),
+    collection    = collection,
     for_if_stmts  = for_if_stmts,
     body_stmts    = body_stmts,
     body_comments = body_comments
@@ -419,7 +424,6 @@ end
 local function collapse_for_comprehension(for_statement)
 
   local stmt = destructure_for_comprehension(for_statement)
-  vim.print(stmt)
   if not stmt then
     return
   end
